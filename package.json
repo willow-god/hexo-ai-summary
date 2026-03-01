@@ -1,6 +1,6 @@
 {
   "name": "hexo-ai-summary-liushen",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Hexo 插件：使用 AI（如 ChatGPT 或腾讯混元）自动为 Markdown 博文生成摘要，并将摘要写入 front-matter，可控制并发请求。",
   "main": "index.js",
   "scripts": {

@@ -1,6 +1,6 @@
 const fetch = require('node-fetch')
 
-module.exports = async function ai(token, api, model, content, prompt) {
+module.exports = async function ai(token, api, model, content, prompt, maxTokens) {
   const url = api || 'https://api.openai.com/v1/chat/completions'
 
   const headers = {
@@ -14,7 +14,7 @@ module.exports = async function ai(token, api, model, content, prompt) {
       { role: 'system', content: "所有摘要内容均不要换行，不要分段，不要分点，写在一段文本内即可！" + prompt },
       { role: 'user', content: content}
     ],
-    max_tokens: 300
+    max_tokens: maxTokens || 2000
   }
 
   try {
@@ -33,8 +33,11 @@ module.exports = async function ai(token, api, model, content, prompt) {
 
     // 如果返回格式不正确，抛出错误
     const reply = json.choices?.[0]?.message?.content?.trim()
-    if (!reply) {
+    if (reply === undefined || reply === null) {
       throw new Error('OpenAI 返回的响应格式不正确')
+    }
+    if (reply === '') {
+      throw new Error('content 为空但是请求成功，请检查是否使用思考模型且输出 token 过短（max_output_token 设置不足）')
     }
 
     // 后处理与校验

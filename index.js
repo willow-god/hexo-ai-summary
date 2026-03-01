@@ -63,7 +63,8 @@ hexo.extend.filter.register('before_post_render', async function (data) {
                 config.api,
                 config.model,
                 content,
-                defaultPrompt
+                defaultPrompt,
+                config.max_output_token || 2000
             )
 
             // 检测内容是否为空，是否有换行，是否有#,$,%之类的特殊字符

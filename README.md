@@ -17,6 +17,7 @@
 * ✅ **基于规则清洗 Markdown 正文内容，聚焦核心信息**
 * ✅ **支持多篇文章并发请求，减少生成时间**
 * ✅ **日志输出分级，调试更清晰**
+* ✅ **支持带思考过程的推理模型（DeepSeek-R1、GLM-4.7-Flash 等）**
 
 ---
 
@@ -53,7 +54,11 @@ aisummary:
     # - "\\{%.*?%\\}"
     # - "!\\[.*?\\]\\(.*?\\)"
   
-  max_token: 5000           # 输入内容最大 token 长度（非输出限制）
+  max_token: 5000           # 输入内容最大 token 长度（非输出限制，用于裁剪过长的文章正文）
+  max_output_token: 2000    # AI 最大输出 token 数（即 max_tokens 参数），默认 2000
+                            # ⚠️ 使用带思考过程的推理模型（如 GLM-4.7-Flash、DeepSeek-R1 等）时，
+                            # 思考过程会消耗大量 token，建议设置为 4000 或更高，
+                            # 否则 token 耗尽时 content 为空，摘要生成会失败。
   concurrency: 2            # 并发处理数，建议不高于 5
   sleep_time: 0             # 请求间隔时间（毫秒），用于避免请求超速。默认为 0
 ```
@@ -121,6 +126,29 @@ title: 如何使用 hexo-ai-summary-liushen
 summary: 这里是清羽AI，这篇文章介绍了如何为 Hexo 博客自动生成摘要，包括插件配置方法、使用流程以及如何接入 OpenAI 或腾讯混元模型等内容。
 ---
 ```
+
+---
+
+## ❓ 常见问题
+
+### 报错：`content 为空但是请求成功，请检查是否使用思考模型且输出 token 过短`
+
+使用带思考过程的推理模型（如 GLM-4.7-Flash、DeepSeek-R1 等）时，模型会先输出大量 `reasoning_content`（思考过程），再输出 `content`（实际摘要）。若 `max_output_token` 设置过小，token 在思考阶段就已耗尽，`content` 为空字符串，导致摘要生成失败。
+
+**解决方法：** 将 `max_output_token` 调大，推荐 4000 或以上：
+
+```yaml
+aisummary:
+  max_output_token: 4000
+```
+
+### 报错：`AI 请求失败 (4xx)`
+
+检查 `token` 是否正确、`api` 地址是否填写完整（需包含 `/v1/chat/completions` 路径）、模型名称是否拼写正确。
+
+### 摘要生成后写入文章，但内容不符合预期
+
+可调整 `prompt` 内容，明确要求输出字数范围、格式限制等。同时确认 `max_output_token` 足够大，避免摘要被截断。
 
 ---
 
