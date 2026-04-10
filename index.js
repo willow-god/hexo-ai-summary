@@ -1,14 +1,18 @@
 const strip = require('./strip')
 const ai = require('./ai')
-const fs = require('hexo-fs')
+const hexoFs = require('hexo-fs')
+const nodeFs = require('fs').promises
+const path = require('path')
 const fm = require('hexo-front-matter')
 const pLimit = require('p-limit')
 
+const PLUGIN_PREFIX = '[Hexo-AI-Summary-LiuShen]'
+
 // 日志等级枚举
 const LOG_LEVELS = {
-    SILENT: 0,   // 只输出错误
-    NORMAL: 1,   // 输出错误和需要生成摘要的文章
-    VERBOSE: 2   // 输出所有信息，包括跳过的文章
+    SILENT: 0,   // 只输出错误和成功
+    NORMAL: 1,   // 输出错误和摘要预览
+    VERBOSE: 2   // 输出调试信息
 }
 
 function hasOwn(obj, key) {
@@ -29,6 +33,41 @@ function getLoggerLevel(value) {
         : LOG_LEVELS.NORMAL
 }
 
+function getSummaryPreview(summary) {
+    return `${summary.slice(0, 10)}...`
+}
+
+async function writeFrontMatterSafely(filePath, frontMatter, mdContent) {
+    const dir = path.dirname(filePath)
+    const base = path.basename(filePath)
+    const suffix = `${process.pid}-${Date.now()}`
+    const tempPath = path.join(dir, `${base}.aisummary.${suffix}.tmp`)
+    const backupPath = path.join(dir, `${base}.aisummary.${suffix}.bak`)
+    const nextContent = `---\n${fm.stringify(frontMatter)}\n${mdContent}`
+
+    await hexoFs.writeFile(tempPath, nextContent)
+
+    let originalMoved = false
+
+    try {
+        await nodeFs.rename(filePath, backupPath)
+        originalMoved = true
+        await nodeFs.rename(tempPath, filePath)
+    } catch (error) {
+        if (originalMoved) {
+            try {
+                await nodeFs.rename(backupPath, filePath)
+            } catch (restoreError) {
+                throw new Error(`写入文章文件失败，且恢复原文件失败：${restoreError.message}；原始错误：${error.message}`)
+            }
+        }
+        throw new Error(`写入文章文件失败，原文件未被覆盖：${error.message}`)
+    } finally {
+        await nodeFs.unlink(tempPath).catch(() => {})
+        await nodeFs.unlink(backupPath).catch(() => {})
+    }
+}
+
 function normalizeConfig(rawConfig = {}) {
     const warnings = []
     const hasMaxInputToken = hasOwn(rawConfig, 'max_input_token')
@@ -43,10 +82,14 @@ function normalizeConfig(rawConfig = {}) {
 
     if (hasDeprecatedMaxToken) {
         if (hasMaxInputToken) {
-            warnings.push('[Hexo-AI-Summary-LiuShen] 配置项 max_token 已废弃，请尽快升级为 max_input_token；当前将优先使用 max_input_token。')
+            warnings.push(`${PLUGIN_PREFIX} 配置项 max_token 已废弃，请尽快升级为 max_input_token；当前将优先使用 max_input_token。`)
         } else {
-            warnings.push('[Hexo-AI-Summary-LiuShen] 配置项 max_token 已废弃，请尽快升级为 max_input_token；当前版本仍兼容旧键。')
+            warnings.push(`${PLUGIN_PREFIX} 配置项 max_token 已废弃，请尽快升级为 max_input_token；当前版本仍兼容旧键。`)
         }
+    }
+
+    if (rawConfig.thinking === true) {
+        warnings.push(`${PLUGIN_PREFIX} 已开启思考链，可能造成摘要失败，非必要不要开启。`)
     }
 
     return {
@@ -79,7 +122,7 @@ const { config, warnings } = normalizeConfig(rawConfig)
 warnings.forEach(message => console.warn(message))
 
 if (!config.api) {
-    console.error('[Hexo-AI-Summary-LiuShen] 请在配置文件中设置 api')
+    console.error(`${PLUGIN_PREFIX} 请在配置文件中设置 api`)
     return
 }
 
@@ -87,16 +130,16 @@ const limit = pLimit(config.concurrency)
 const fieldName = config.summary_field
 const defaultPrompt = config.prompt
 const sleepTime = config.sleep_time
-
-// 获取当前的日志等级，默认为 NORMAL
 const logLevel = config.logger
 
-hexo.extend.filter.register('before_post_render', async function (data) {
+if (logLevel >= LOG_LEVELS.VERBOSE) {
+    console.info(`${PLUGIN_PREFIX} 插件启动：field=${fieldName}，concurrency=${config.concurrency}，max_input_token=${config.max_input_token}，max_output_token=${config.max_output_token}，thinking=${config.thinking}`)
+}
 
-    // 检查是否为文章页面
-    if (data.layout != 'post' || !data.source.startsWith('_posts/')) {
+hexo.extend.filter.register('before_post_render', async function (data) {
+    if (data.layout != 'post' || typeof data.source !== 'string' || !data.source.startsWith('_posts/')) {
         if (logLevel >= LOG_LEVELS.VERBOSE) {
-            console.info(`[Hexo-AI-Summary-LiuShen] 跳过 ${data.title}，不是文章页面`)
+            console.info(`${PLUGIN_PREFIX} 跳过 ${data.title}，不是文章页面`)
         }
         return data
     }
@@ -104,63 +147,68 @@ hexo.extend.filter.register('before_post_render', async function (data) {
     return await limit(async () => {
         if (!config.enable || data.is_summary === false) { // 感谢MCXiaoChen
             if (logLevel >= LOG_LEVELS.VERBOSE) {
-                console.info(`[Hexo-AI-Summary-LiuShen] 文章 ${data.title} 被标记为不进行摘要，跳过`)
+                console.info(`${PLUGIN_PREFIX} 文章 ${data.title} 被标记为不进行摘要，跳过`)
             }
             return data
         }
         if (data[fieldName] && data[fieldName].length > 0 && config.cover_all !== true) {
             if (logLevel >= LOG_LEVELS.VERBOSE) {
-                console.info(`[Hexo-AI-Summary-LiuShen] 文章 ${data.title} 已经有摘要，跳过`)
+                console.info(`${PLUGIN_PREFIX} 文章 ${data.title} 已经有摘要，跳过`)
             }
             return data
         }
 
-        let content = strip(data.content, data.title, config)
+        const content = strip(data.content, data.title, config)
+        const filePath = path.join(this.source_dir, data.source)
 
-        const path = this.source_dir + data.source
-        const frontMatter = fm.parse(await fs.readFile(path))
-        // 去掉 frontMatter 中的 _content，并保存到 MdContent 变量中，删除MDContent 文本开始可能存在的换行符
-        const MdContent = frontMatter._content.replace(/^\n+|\n+$/g, '')
-        delete frontMatter._content
+        if (logLevel >= LOG_LEVELS.VERBOSE) {
+            console.info(`${PLUGIN_PREFIX} 开始生成摘要：title=${data.title}，source=${data.source}，model=${config.model || 'gpt-3.5-turbo'}，thinking=${config.thinking}`)
+        }
 
         try {
-            const ai_content = await ai(
+            const frontMatter = fm.parse(await hexoFs.readFile(filePath))
+            const mdContent = typeof frontMatter._content === 'string'
+                ? frontMatter._content.replace(/^\n+|\n+$/g, '')
+                : ''
+            delete frontMatter._content
+
+            const aiContent = await ai(
                 config.token,
                 config.api,
                 config.model,
                 content,
                 defaultPrompt,
                 config.max_output_token,
-                config.thinking
+                config.thinking,
+                logLevel
             )
 
-            // 检测内容是否为空，是否有换行，是否有#,$,%之类的特殊字符
-            if (!ai_content || ai_content.length < 10 || /[\n#$%]/.test(ai_content)) {
-                if (logLevel >= LOG_LEVELS.NORMAL) {
-                    console.info(`[Hexo-AI-Summary-LiuShen] 文章 ${data.title} 的摘要内容不符合要求，跳过`)
-                }
+            if (!aiContent || aiContent.length < 10 || /[\n#$%]/.test(aiContent)) {
+                console.error(`${PLUGIN_PREFIX} 生成摘要失败：${data.title}\nAI 返回的摘要内容不符合要求（长度不足或包含非法字符）`)
                 if (logLevel >= LOG_LEVELS.VERBOSE) {
-                    console.info(`[Hexo-AI-Summary-LiuShen] 文章 ${data.title} 的摘要内容为：${ai_content}`)
+                    console.info(`${PLUGIN_PREFIX} 异常摘要内容：${aiContent}`)
                 }
                 return data
             }
 
-            frontMatter[fieldName] = data[fieldName] = ai_content
+            frontMatter[fieldName] = aiContent
+            await writeFrontMatterSafely(filePath, frontMatter, mdContent)
+            data[fieldName] = aiContent
 
-            await fs.writeFile(path, `---\n${fm.stringify(frontMatter)}\n${MdContent}`)
-            if (logLevel >= LOG_LEVELS.NORMAL) {
-                console.info(`[Hexo-AI-Summary-LiuShen] 摘要 ${data.title} 完成`)
+            if (logLevel === LOG_LEVELS.SILENT) {
+                console.info(`${PLUGIN_PREFIX} 摘要 ${data.title} 完成`)
+            } else if (logLevel === LOG_LEVELS.NORMAL) {
+                console.info(`${PLUGIN_PREFIX} ${data.title} 摘要：${getSummaryPreview(aiContent)}`)
+            } else {
+                console.info(`${PLUGIN_PREFIX} 摘要 ${data.title} 完成：${aiContent}`)
             }
         } catch (err) {
-            if (logLevel >= LOG_LEVELS.SILENT) {
-                console.error(`[Hexo-AI-Summary-LiuShen] 生成摘要失败：${data.title}\n${err.message}`)
-            }
+            console.error(`${PLUGIN_PREFIX} 生成摘要失败：${data.title}\n${err.message}`)
         }
 
-        // 如果设置了休眠时间，则等待指定时间(毫秒)
         if (sleepTime > 0) {
             if (logLevel >= LOG_LEVELS.VERBOSE) {
-                console.info(`[Hexo-AI-Summary-LiuShen] 处理完毕一篇文章，休眠 ${sleepTime} 毫秒...`)
+                console.info(`${PLUGIN_PREFIX} 处理完毕一篇文章，休眠 ${sleepTime} 毫秒...`)
             }
             await new Promise(resolve => setTimeout(resolve, sleepTime))
         }

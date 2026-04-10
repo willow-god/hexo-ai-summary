@@ -1,6 +1,12 @@
 const fetch = require('node-fetch')
 
-module.exports = async function ai(token, api, model, content, prompt, maxTokens, thinking) {
+const LOG_LEVELS = {
+  SILENT: 0,
+  NORMAL: 1,
+  VERBOSE: 2
+}
+
+module.exports = async function ai(token, api, model, content, prompt, maxTokens, thinking, logLevel = LOG_LEVELS.NORMAL) {
   const url = api || 'https://api.openai.com/v1/chat/completions'
 
   const headers = {
@@ -11,7 +17,7 @@ module.exports = async function ai(token, api, model, content, prompt, maxTokens
   const body = {
     model: model || 'gpt-3.5-turbo',
     messages: [
-      { role: 'system', content: "所有摘要内容均不要换行，不要分段，不要分点，写在一段文本内即可！" + prompt },
+      { role: 'system', content: '所有摘要内容均不要换行，不要分段，不要分点，写在一段文本内即可！' + prompt },
       { role: 'user', content: content }
     ],
     max_tokens: maxTokens || 2000
@@ -19,6 +25,10 @@ module.exports = async function ai(token, api, model, content, prompt, maxTokens
 
   if (thinking === true) {
     body.reasoning_effort = 'medium'
+  }
+
+  if (logLevel >= LOG_LEVELS.VERBOSE) {
+    console.info(`[Hexo-AI-Summary-LiuShen] AI 请求参数：model=${body.model}，max_tokens=${body.max_tokens}，thinking=${thinking === true}`)
   }
 
   try {
@@ -34,37 +44,40 @@ module.exports = async function ai(token, api, model, content, prompt, maxTokens
     }
 
     const json = await res.json()
+    const message = json.choices?.[0]?.message
+    const reply = message?.content?.trim()
 
-    // 如果返回格式不正确，抛出错误
-    const reply = json.choices?.[0]?.message?.content?.trim()
+    if (logLevel >= LOG_LEVELS.VERBOSE) {
+      console.info(`[Hexo-AI-Summary-LiuShen] AI 响应概览：has_choices=${Array.isArray(json.choices)}，has_content=${reply !== undefined && reply !== null && reply !== ''}`)
+    }
+
     if (reply === undefined || reply === null) {
-      throw new Error('OpenAI 返回的响应格式不正确')
+      throw new Error('OpenAI 返回的响应格式不正确，未找到 choices[0].message.content')
     }
     if (reply === '') {
-      throw new Error('content 为空但是请求成功，请检查是否使用思考模型且输出 token 过短（max_output_token 设置不足）')
+      if (thinking === true) {
+        throw new Error('思考链仍在输出但被 max_output_token 限制截断，导致最终 content 为空；请提高 max_output_token，或关闭 thinking 后重试')
+      }
+      throw new Error('content 为空但是请求成功，请检查模型返回内容是否异常')
     }
 
-    // 后处理与校验
     const cleaned = reply
-      .replace(/[\r\n]+/g, ' ') // 去换行
-      .replace(/\s+/g, ' ')     // 合并多空格
-      .replace(/[`]/g, '')      // 去"`"符号
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/[`]/g, '')
       .trim()
 
-    // 校验非法字符和最大长度
     const illegalChars = /[#`]/g
-    if (cleaned.length > 500) {
+    if (cleaned.length > 500 && logLevel >= LOG_LEVELS.VERBOSE) {
       console.info('[Hexo-AI-Summary-LiuShen] AI 返回摘要不符合格式要求（长度超限）')
     }
 
-    if (cleaned.match(illegalChars)) {
+    if (cleaned.match(illegalChars) && logLevel >= LOG_LEVELS.VERBOSE) {
       console.info('[Hexo-AI-Summary-LiuShen] AI 返回摘要不符合格式要求（包含非法字符）')
     }
 
     return cleaned
-
   } catch (error) {
-    // 捕获并抛出请求中的任何错误
     throw new Error(`AI 请求失败: ${error.message}`)
   }
 }
