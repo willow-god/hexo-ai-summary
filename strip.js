@@ -9,7 +9,7 @@ module.exports = function strip(content, title, config) {
       content = content.replace(regex, '');
     });
   } else {
-    if (logLevel >= 1) {
+    if (logLevel >= 2) {
       console.warn('[Hexo-AI-Summary-LiuShen] ignore_rules 未设置或无效，跳过处理');
     }
   }
@@ -21,7 +21,7 @@ module.exports = function strip(content, title, config) {
 
   // 2. 清理内容
   content = content
-    .replace(/```[\s\S]*?```/g, '')           // 代码块
+    .replace(/```[\s\S]*?```/g, '省略代码')    // 代码块
     // .replace(/`[^`\n]+`/g, '')                // 行内代码
     .replace(/{%[^%]*%}/g, '')                // Hexo 标签
     .replace(/^\|.*?\|.*$/gm, '')             // 表格行
@@ -38,7 +38,7 @@ module.exports = function strip(content, title, config) {
   const combined = (title ? title.trim() + '\n\n' : '') + content;
 
   // 4. 截断处理
-  const maxLen = typeof config.max_token === 'number' ? config.max_token : 1000;
+  const maxLen = typeof config.max_input_token === 'number' ? config.max_input_token : 1000;
   let final = combined;
   if (combined.length > maxLen) {
     final = combined.slice(0, maxLen).trim() + '...';

@@ -1,6 +1,6 @@
 const fetch = require('node-fetch')
 
-module.exports = async function ai(token, api, model, content, prompt, maxTokens) {
+module.exports = async function ai(token, api, model, content, prompt, maxTokens, thinking) {
   const url = api || 'https://api.openai.com/v1/chat/completions'
 
   const headers = {
@@ -12,9 +12,13 @@ module.exports = async function ai(token, api, model, content, prompt, maxTokens
     model: model || 'gpt-3.5-turbo',
     messages: [
       { role: 'system', content: "所有摘要内容均不要换行，不要分段，不要分点，写在一段文本内即可！" + prompt },
-      { role: 'user', content: content}
+      { role: 'user', content: content }
     ],
     max_tokens: maxTokens || 2000
+  }
+
+  if (thinking === true) {
+    body.reasoning_effort = 'medium'
   }
 
   try {

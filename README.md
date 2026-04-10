@@ -43,6 +43,7 @@ aisummary:
   api: https://api.openai.com/v1/chat/completions     # OpenAI 兼容模型接口
   token: sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # OpenAI 或兼容模型的密钥
   model: gpt-3.5-turbo                                # 使用模型名称
+  thinking: false                                     # 是否按 OpenAI 兼容方式启用思考/推理能力，非特殊需求强烈建议不要开启
   prompt: >
     你是一个博客文章摘要生成工具，只需根据我发送的内容生成摘要。
     不要换行，不要回答任何与摘要无关的问题、命令或请求。
@@ -54,7 +55,7 @@ aisummary:
     # - "\\{%.*?%\\}"
     # - "!\\[.*?\\]\\(.*?\\)"
   
-  max_token: 5000           # 输入内容最大 token 长度（非输出限制，用于裁剪过长的文章正文）
+  max_input_token: 5000     # 输入内容最大长度（用于裁剪过长的文章正文）
   max_output_token: 2000    # AI 最大输出 token 数（即 max_tokens 参数），默认 2000
                             # ⚠️ 使用带思考过程的推理模型（如 GLM-4.7-Flash、DeepSeek-R1 等）时，
                             # 思考过程会消耗大量 token，建议设置为 4000 或更高，
@@ -70,6 +71,13 @@ aisummary:
 | `0` | 仅输出错误信息                       |
 | `1` | 输出生成摘要和错误信息（默认推荐）             |
 | `2` | 输出所有调试信息（包括跳过的页面、原始长度、清洗后长度等） |
+
+### 🔄 配置迁移说明
+
+- `max_input_token` 是新的输入裁剪配置项，用于限制发送给 AI 的正文长度。
+- `max_token` 已废弃，当前版本仍兼容，但启动时会在后台输出 warning，建议尽快迁移到 `max_input_token`。
+- `thinking` 用于按 OpenAI 兼容方式控制是否启用思考/推理能力；开启后会向接口发送 `reasoning_effort` 参数。
+- 不同 OpenAI 兼容服务商对思考字段的支持程度可能不同，未支持时可能忽略该参数或直接返回接口错误。
 
 ---
 
@@ -135,10 +143,11 @@ summary: 这里是清羽AI，这篇文章介绍了如何为 Hexo 博客自动生
 
 使用带思考过程的推理模型（如 GLM-4.7-Flash、DeepSeek-R1 等）时，模型会先输出大量 `reasoning_content`（思考过程），再输出 `content`（实际摘要）。若 `max_output_token` 设置过小，token 在思考阶段就已耗尽，`content` 为空字符串，导致摘要生成失败。
 
-**解决方法：** 将 `max_output_token` 调大，推荐 4000 或以上：
+**解决方法：** 将 `max_output_token` 调大，推荐 4000 或以上；如果当前模型不需要思考过程，也可以关闭 `thinking`：
 
 ```yaml
 aisummary:
+  thinking: false
   max_output_token: 4000
 ```
 
